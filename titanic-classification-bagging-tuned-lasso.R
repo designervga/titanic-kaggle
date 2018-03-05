@@ -80,7 +80,6 @@ data$Sex_embarked[data$Sex == "male" & data$Embarked == "C"]   <- "male_C"
 data$Sex_embarked[data$Sex == "female" & data$Embarked == "C"] <- "female_C"
 
 
-
 # fare cat
 data$Fare_cat[data$Fare == 0]  <- "free"
 data$Fare_cat[data$Fare > 0 & data$Fare <= 100]  <- "normal"
@@ -92,11 +91,20 @@ data$Age <- log(data$Age +1)
 data$Fare <- log(data$Fare +1)
 
 
+# group of people by ticket
+ticket_group <- ddply(data, ~ Ticket, function(x) c(Ticket_group_size = length(x$Ticket)))
+# merge
+data <- left_join(data, ticket_group, by = "Ticket")
+
+data$Ticket_group[data$Ticket_group_size == 1] <- "Alone"
+data$Ticket_group[data$Ticket_group_size == 2] <- "Couple"
+data$Ticket_group[data$Ticket_group_size >= 3 & data$Ticket_group_size <= 5] <- "Group"
+data$Ticket_group[data$Ticket_group_size >5] <- "LargeGroup"
 
 
 # select data
 data <- data %>% select(Pclass, Age, Sex, Title, Survived, SibSp, Parch, Fare, Embarked, PclassSex, Age_group, Age_sex,
-                        Fare_cat, Sex_embarked)
+                        Fare_cat, Sex_embarked, Ticket_group_size, Ticket_group)
 
 
 
@@ -129,11 +137,12 @@ training.test <- training[-inTrain, ]
 
 
 
+
 # train control with tuned parameters
 folds <- 5
 cv_folds <- createMultiFolds(training.train$Survived, k = folds, times = 1)
 trControl_tuned <- trainControl(
-  method = "boot", number = 5, repeats = 1, search = "grid",
+  method = "repeatedcv", number = 5, repeats = 1, search = "grid",
   index = cv_folds,
   # summaryFunction = twoClassSummary, # add for ROC
   classProbs = TRUE, # Important for classification
@@ -232,52 +241,6 @@ confusionMatrix(training.test$Survived, bag_mostvoted_pred)
 
 
 
-# statistical analysis of difference in bagged predictions with voting vs simple average of probabilities
-# test of equal given proportions
-vote_vs_mean <- as.data.frame(cbind(bag_mostvoted_pred, bag_mean_pred))
-colnames(vote_vs_mean) = c("vote", "mean")
-barplot(table(vote_vs_mean), beside = TRUE, legend = names(vote_vs_mean))
-# 'suvived' predictions always have 100% of agreement (cuttoff ~ 0.6)
-barplot(table(vote_vs_mean$vote), legend = names(vote_vs_mean), ylim = c(0, 250))
-barplot(table(vote_vs_mean$mean), legend = names(vote_vs_mean), ylim = c(0, 250))
-# is there a difference in proportion of 'suvived' between each method?
-
-
-# two sample test of equal proportion
-p1 <- xtabs(~ vote, data = vote_vs_mean)
-p2 <- xtabs(~ mean, data = vote_vs_mean)
-p1p2 <- rbind(p1, p2)
-
-# H0: p1 = p2 | Ha: p1 ≠ P2
-prop.test(x = c(p1p2[1], p1p2[2]), n = c(p1p2[1] + p1p2[3], p1p2[2] + p1p2[4]))
-# we are 95% confident that proportion of 'suvived' is different between average and voting (when cuttoff is little above 0.5)
-# with cutoff 0.5 we have almost the same proportions. There os almost no difference between bagging with average vs voting.
-# altough proportions are different, we saw the same result in the test dataset (same position in the LB)
-
-
-
-
-
-
-
-# statistical analysis of difference in bagged lasso vs no bagging
-# two sample test of equal proportion
-train_pred <- ifelse(train_pred == 1, "survived", "died") 
-bag_vs_single <- as.data.frame(cbind(bag_mostvoted_pred, train_pred))
-u1 <- xtabs(~ bag_mostvoted_pred, data = bag_vs_single)
-u2 <- xtabs(~ train_pred, data = bag_vs_single)
-u1u2 <- rbind(u1, u2)
-
-# H0: u1 = u2 | Ha: u1 ≠ u2
-prop.test(x = c(u1u2[1], u1u2[2]), n = c(u1u2[1] + u1u2[3], u1u2[2] + u1u2[4]))
-# we are not 95% confident that there is a difference between prediction from bagged and single lasso model
-# obs: dataset is to small to detect a small difference in proportion
-
-
-
-
-
-
 # FINAL TRAINING - Bagged Simple Average
 finalPredictions <- 0
 length_divisor <- 1
@@ -309,6 +272,9 @@ submit <- data.frame(PassengerId = PassengerId, Survived = bag_mean_finalPred)
 
 # predicting with votes
 finalPredictions2 <- ifelse(finalPredictions < 0.5, "survived", "died")
+mostvoted <- function(x) {
+  names(sort(table(x), decreasing = TRUE))[1]
+}
 bag_mostvoted_finalPred <- apply(finalPredictions2, 1, mostvoted)
 bag_mostvoted_finalPred <- ifelse(bag_mostvoted_finalPred == "survived", 1, 0)
 submit <- data.frame(PassengerId = PassengerId, Survived = bag_mostvoted_finalPred) # votes
@@ -316,4 +282,4 @@ submit <- data.frame(PassengerId = PassengerId, Survived = bag_mostvoted_finalPr
 
 
 # submission bagging.lasso
-write.csv(submit, file = "submission06.bagging.lasso.100.oneHotEncoding.36var.alpha1.lambdaNEAR0012.votes.csv", row.names = FALSE)
+write.csv(submit, file = "submission07.bagging.lasso.100.oneHotEncoding.41var.alpha1.lambdaNEAR0012.csv", row.names = FALSE)

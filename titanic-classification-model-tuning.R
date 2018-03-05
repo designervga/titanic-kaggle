@@ -94,9 +94,20 @@ data$Fare <- log(data$Fare +1)
 
 
 
+# group of people by ticket
+ticket_group <- ddply(data, ~ Ticket, function(x) c(Ticket_group_size = length(x$Ticket)))
+# merge
+data <- left_join(data, ticket_group, by = "Ticket")
+
+data$Ticket_group[data$Ticket_group_size == 1] <- "Alone"
+data$Ticket_group[data$Ticket_group_size == 2] <- "Couple"
+data$Ticket_group[data$Ticket_group_size >= 3 & data$Ticket_group_size <= 5] <- "Group"
+data$Ticket_group[data$Ticket_group_size >5] <- "LargeGroup"
+
+
 # select data
 data <- data %>% select(Pclass, Age, Sex, Title, Survived, SibSp, Parch, Fare, Embarked, PclassSex, Age_group, Age_sex,
-                        Fare_cat, Sex_embarked)
+                        Fare_cat, Sex_embarked, Ticket_group_size, Ticket_group)
 # data$Pclass <- as.factor(data$Pclass) # 1st is upper and 3rd is lower class
 # data$Title <- as.factor(data$Title)
 # data$Sex <- as.factor(data$Sex)
@@ -137,6 +148,7 @@ training.test <- training[-inTrain, ]
 
 # train control with tuned parameters
 folds <- 5
+cv_folds <- createMultiFolds(training.train$Survived, k = folds, times = 1)
 trControl_tuned <- trainControl(
   method = "repeatedcv", number = 5, repeats = 1, search = "grid",
   index = cv_folds,
@@ -144,7 +156,6 @@ trControl_tuned <- trainControl(
   classProbs = TRUE, # Important for classification
   verboseIter = TRUE
 )
-cv_folds <- createMultiFolds(training.train$Survived, k = folds, times = 1)
 
 # train control for searching parameter
 trControl_search <- trainControl(
@@ -534,7 +545,7 @@ submit <- data.frame(PassengerId = PassengerId, Survived = pred)
 
 
 # submission glmnet
-write.csv(submit, file = "submission.glmnet.05.oneHotEncoding.36var.alpha1.lambda0012.csv", row.names = FALSE)
+write.csv(submit, file = "submission.glmnet.06.oneHotEncoding.41var.alpha1.lambda0012.csv", row.names = FALSE)
 
 # submission xgbTree
 write.csv(submit, file = "submission.03.oneHotEncoding.xgbLinear.nrounds100.lambda01.alpha1.eta05.csv", row.names = FALSE)

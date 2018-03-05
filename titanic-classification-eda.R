@@ -170,9 +170,20 @@ data$Fare <- log(data$Fare +1)
 
 
 
+# group of people by ticket
+ticket_group <- ddply(data, ~ Ticket, function(x) c(Ticket_group_size = length(x$Ticket)))
+# merge
+data <- left_join(data, ticket_group, by = "Ticket")
+
+data$Ticket_group[data$Ticket_group_size == 1] <- "Alone"
+data$Ticket_group[data$Ticket_group_size == 2] <- "Couple"
+data$Ticket_group[data$Ticket_group_size >= 3 & data$Ticket_group_size <= 5] <- "Group"
+data$Ticket_group[data$Ticket_group_size >5] <- "LargeGroup"
+
+
 # select data
 data <- data %>% select(Pclass, Age, Sex, Title, Survived, SibSp, Parch, Fare, Embarked, PclassSex, Age_group, Age_sex,
-                        Fare_cat, Sex_embarked)
+                        Fare_cat, Sex_embarked, Ticket_group_size, Ticket_group)
 # data$Pclass <- as.factor(data$Pclass) # 1st is upper and 3rd is lower class
 # data$Title <- as.factor(data$Title)
 # data$Sex <- as.factor(data$Sex)
