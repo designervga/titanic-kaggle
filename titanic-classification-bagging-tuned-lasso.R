@@ -222,10 +222,56 @@ confusionMatrix(training.test$Survived, bag_mean_pred)
 mostvoted <- function(x) {
   names(sort(table(x), decreasing = TRUE))[1]
 }
-predictions2 <- ifelse(bag_mean_finalPred < 0.5, "survived", "died")
+predictions2 <- ifelse(predictions < 0.5, "survived", "died")
 bag_mostvoted_pred <- apply(predictions2, 1, mostvoted)
 confusionMatrix(training.test$Survived, bag_mostvoted_pred)
 # 0.8254
+
+
+
+
+
+
+# statistical analysis of difference in bagged predictions with voting vs simple average of probabilities
+# test of equal given proportions
+vote_vs_mean <- as.data.frame(cbind(bag_mostvoted_pred, bag_mean_pred))
+colnames(vote_vs_mean) = c("vote", "mean")
+barplot(table(vote_vs_mean), beside = TRUE, legend = names(vote_vs_mean))
+# 'suvived' predictions always have 100% of agreement (cuttoff ~ 0.6)
+barplot(table(vote_vs_mean$vote), legend = names(vote_vs_mean), ylim = c(0, 250))
+barplot(table(vote_vs_mean$mean), legend = names(vote_vs_mean), ylim = c(0, 250))
+# is there a difference in proportion of 'suvived' between each method?
+
+
+# two sample test of equal proportion
+p1 <- xtabs(~ vote, data = vote_vs_mean)
+p2 <- xtabs(~ mean, data = vote_vs_mean)
+p1p2 <- rbind(p1, p2)
+
+# H0: p1 = p2 | Ha: p1 ≠ P2
+prop.test(x = c(p1p2[1], p1p2[2]), n = c(p1p2[1] + p1p2[3], p1p2[2] + p1p2[4]))
+# we are 95% confident that proportion of 'suvived' is different between average and voting (when cuttoff is little above 0.5)
+# with cutoff 0.5 we have almost the same proportions. There os almost no difference between bagging with average vs voting.
+# altough proportions are different, we saw the same result in the test dataset (same position in the LB)
+
+
+
+
+
+
+
+# statistical analysis of difference in bagged lasso vs no bagging
+# two sample test of equal proportion
+train_pred <- ifelse(train_pred == 1, "survived", "died") 
+bag_vs_single <- as.data.frame(cbind(bag_mostvoted_pred, train_pred))
+u1 <- xtabs(~ bag_mostvoted_pred, data = bag_vs_single)
+u2 <- xtabs(~ train_pred, data = bag_vs_single)
+u1u2 <- rbind(u1, u2)
+
+# H0: u1 = u2 | Ha: u1 ≠ u2
+prop.test(x = c(u1u2[1], u1u2[2]), n = c(u1u2[1] + u1u2[3], u1u2[2] + u1u2[4]))
+# we are not 95% confident that there is a difference between prediction from bagged and single lasso model
+# obs: dataset is to small to detect a small difference in proportion
 
 
 
