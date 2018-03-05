@@ -97,14 +97,8 @@ data$Fare <- log(data$Fare +1)
 # select data
 data <- data %>% select(Pclass, Age, Sex, Title, Survived, SibSp, Parch, Fare, Embarked, PclassSex, Age_group, Age_sex,
                         Fare_cat, Sex_embarked)
-# data$Pclass <- as.factor(data$Pclass) # 1st is upper and 3rd is lower class
-# data$Title <- as.factor(data$Title)
-# data$Sex <- as.factor(data$Sex)
 
-# near zero variance here? select by hand with variable importance analysis?
-# nzv <- nearZeroVar(data.clean, saveMetrics = TRUE)
-# nzvNames <- row.names(nzv[nzv$nzv == TRUE, ])
-# data.clean <- data.clean[, !nzv$nzv]
+
 
 # create dummy variables from levels of factors
 Pclass <- data$Pclass
@@ -136,146 +130,144 @@ training.test <- training[-inTrain, ]
 
 
 # train control with tuned parameters
+folds <- 5
+cv_folds <- createMultiFolds(training.train$Survived, k = folds, times = 1)
 trControl_tuned <- trainControl(
-  method = "cv", number = 5, search = "grid",
-  savePredictions = TRUE,
-  classProbs = TRUE,
+  method = "boot", number = 5, repeats = 1, search = "grid",
+  index = cv_folds,
+  # summaryFunction = twoClassSummary, # add for ROC
+  classProbs = TRUE, # Important for classification
+  verboseIter = TRUE
+)
+
+# train control for searching parameter
+trControl_search <- trainControl(
+  method = "repeatedcv", number = folds, repeats = 2, search = "random",
+  index = cv_folds,
+  classProbs = TRUE, # Important for classification
   verboseIter = TRUE
 )
 
 
+
+
+
+
 # TRAINING-TRAIN
 
-# LASSO (best at test set) 
-lassoGrid <- expand.grid(
+# LASSO Tuning
+myGrid_lasso <- expand.grid(
   alpha = 1,
-  lambda = 0.012)
+  lambda = 0.012
+)
 
+set.seed(42)
+lassoFit <- train(Survived ~ ., data = training.train,
+                   method = "glmnet",
+                   tuneGrid = myGrid_lasso,
+                   # tuneLength = 10,
+                   metric = "Accuracy",
+                   trControl = trControl_tuned)
+plot(lassoFit$finalModel, label = TRUE)
+plot(varImp(lassoFit))
+# training.train Accuracy 0.83027
 
-# Elastic Net 
-glmnetGrid <- expand.grid(
-  alpha = 0,
-  lambda = seq(0.001, 0.2, 0.001))
+train_pred <- predict(lassoFit, newdata = training.test)
+confusionMatrix(training.test$Survived, train_pred)
+# 0.8282    
 
-
-# Support Vector Machines with Radial Basis Function Kernel 
-svmRadialGrid <- expand.grid(
-  sigma = 0.062,
-  C = 2.7)
-
-
-# Decision tree with rpart
-rpartGrid <- expand.grid(
-  cp = seq(0.001, 0.01, 0.001))
-
-
-# kernel k-nearest neighboors
-kknnGrid <- expand.grid(
-  kmax = 11,
-  distance = 2,
-  kernel = "optimal")
-
-
-# random forest with ranger
-rangerGrid <- expand.grid(
-  mtry = 8,
-  splitrule = "extratrees",
-  min.node.size = 8)
-
-
-# random forest with rf
-rfGrid <- expand.grid(
-  mtry = c(2:20))
-
-
-# stocastic gradient boosting with gbm
-gbmGrid <- expand.grid(
-  n.trees = 500,
-  interaction.depth = 7,
-  shrinkage = 0.01,
-  n.minobsinnode = 10)
-
-
-# Xtreme Gradient Boosting with xgbLinear
-xgbLinearGrid <- expand.grid(
-  nrounds = 100,
-  lambda = 0.1,
-  alpha = 1,
-  eta = 0.5)
-
-
-# extreme regularized gradient boosting with xgbTree (xboost)
-xgbTreeGrid <- expand.grid(
-  nrounds = 600,
-  eta = 0.15,
-  gamma = 0.3,
-  colsample_bytree = 0.04,
-  min_child_weight = 3,
-  subsample = 0.9,
-  max_depth = 6)
+train_pred <- ifelse(train_pred == "survived", 1, 0)
+auc <- roc(training.test$Survived, train_pred, plot = TRUE)
+cutoff <- coords(auc, "best", ret = c("threshold"))
+plot.roc(auc, print.thres = cutoff)
+# training.test AUC 0.8078
 
 
 
 
 
 
-# STACKING TUNED MODELS
-library(caretEnsemble)
-set.seed(1234)
-model_list <- caretList(
-  Survived ~.,
-  data = training,
-  trControl = trControl_tuned,
-  tuneList=list(
-    gbm        = caretModelSpec(method = "gbm",        tuneGrid = gbmGrid),
-    xgbTree    = caretModelSpec(method = "xgbTree",    tuneGrid = xgbTreeGrid),
-    # xgbLinear  = caretModelSpec(method = "xgbLinear",  tuneGrid = xgbLinearGrid),
-    kknn       = caretModelSpec(method = "kknn",       tuneGrid = kknnGrid),
-    rpart      = caretModelSpec(method = "rpart",      tuneGrid = rpartGrid),
-    svmRadial  = caretModelSpec(method = "svmRadial",  tuneGrid = svmRadialGrid),
-    glmnet     = caretModelSpec(method = "glmnet",     tuneGrid = lassoGrid),
-    glmnet     = caretModelSpec(method = "glmnet",     tuneGrid = glmnetGrid),
-    rf         = caretModelSpec(method = "rf",         tuneGrid = rfGrid),
-    ranger     = caretModelSpec(method = "ranger",     tuneGrid = rangerGrid)))
+# bag of lasso
+predictorNames <- names(predictors)
+length_divisor <- 1
+predictions <- 0
+predictions <- foreach(i=1:100,.combine=cbind) %dopar% { 
+  set.seed(i)
+  sampleRows <- sample(nrow(training.train), size = floor((nrow(training.train)/length_divisor)), replace = TRUE)
+  for(m in i) {
+    lambda_test = 0.012 + log(sqrt(m))/1000
+    myGrid_lasso <- expand.grid(
+      alpha = 1,
+      lambda = lambda_test
+    )
+  }
+  fit <- train(Survived ~ ., data = training.train[sampleRows, ],
+               method = "glmnet",
+               tuneGrid = myGrid_lasso,
+               metric = "Accuracy",
+               trControl = trControl_tuned)
+  predictions[i] <- data.frame(predict(fit, newdata = training.test, type = "prob")[1]) # pred > .5 died
+}
+auc <- roc(training.test$Survived, rowMeans(predictions), plot = TRUE)
+cutoff <- coords(auc, "best", ret = c("threshold"))
+print(auc)
+
+# predicting with average of probabilities
+bag_mean_pred <- rowMeans(predictions) # prob of dying
+bag_mean_pred <- ifelse(bag_mean_pred < cutoff, "survived", "died")
+confusionMatrix(training.test$Survived, bag_mean_pred)
+# accuracy 0.831 
+
+# predicting with votes
+mostvoted <- function(x) {
+  names(sort(table(x), decreasing = TRUE))[1]
+}
+predictions2 <- ifelse(bag_mean_finalPred < 0.5, "survived", "died")
+bag_mostvoted_pred <- apply(predictions2, 1, mostvoted)
+confusionMatrix(training.test$Survived, bag_mostvoted_pred)
+# 0.8254
 
 
-p <- as.data.frame(predict(model_list, newdata=head(testing)))
-print(p)
-xyplot(resamples(model_list))
-
-modelCor(resamples(model_list))
-# their predicitons are fairly un-correlated, but their overall accuaracy is similar.
 
 
 
 
+# FINAL TRAINING - Bagged Simple Average
+finalPredictions <- 0
+length_divisor <- 1
+finalPredictions <- foreach(i=1:100,.combine=cbind) %dopar% { 
+  set.seed(i)
+  sampleRows <- sample(nrow(training), size = floor((nrow(training)/length_divisor)), replace = TRUE)
+  for(m in i) {
+    lambda_test = 0.012 + log(sqrt(m))/1000
+    myGrid_lasso <- expand.grid(
+      alpha = 1,
+      lambda = lambda_test
+    )
+  }
+  fit <- train(Survived ~ ., data = training[sampleRows, ],
+               method = "glmnet",
+               tuneGrid = myGrid_lasso,
+               # tuneLength = 10,
+               metric = "Accuracy",
+               trControl = trControl_tuned)
+  finalPredictions[i] <- data.frame(predict(fit, newdata = testing, type = "prob")[1]) # pred > .5 died
+}
 
-#  linear greedy optimization on RMSE
-my_control <- trainControl(
-  method = "boot",
-  number = 5,
-  verboseIter = TRUE,
-  savePredictions = "final")
-my_grid <- expand.grid(
-  alpha = 1,
-  lambda = 0.02)
-
-#Make a linear regression ensemble
-glm_ensemble <- caretStack(
-  model_list,
-  method = "glmnet",
-  trControl = my_control,
-  tuneGrid = my_grid)
-
-summary(glm_ensemble)
-plot(glm_ensemble$ens_model$finalModel)
+# predicting with average of probabilities
+bag_mean_finalPred <- rowMeans(finalPredictions) # prob of dying
+bag_mean_finalPred <- ifelse(bag_mean_finalPred < 0.5, "survived", "died")
+bag_mean_finalPred <- ifelse(bag_mean_finalPred == "survived", 1, 0)
+submit <- data.frame(PassengerId = PassengerId, Survived = bag_mean_finalPred)
 
 
-# caretStacking prediction
-pred_stack <- predict(glm_ensemble, testing)
-pred_stack <- ifelse(pred_stack == "survived", 1, 0)
-submit <- data.frame(PassengerId = PassengerId, Survived = pred_stack)
+# predicting with votes
+finalPredictions2 <- ifelse(finalPredictions < 0.5, "survived", "died")
+bag_mostvoted_finalPred <- apply(finalPredictions2, 1, mostvoted)
+bag_mostvoted_finalPred <- ifelse(bag_mostvoted_finalPred == "survived", 1, 0)
+submit <- data.frame(PassengerId = PassengerId, Survived = bag_mostvoted_finalPred) # votes
+# bagged results for both probability average and votes showed no improvements in the test dataset
 
 
-# submission stacking
-write.csv(submit, file = "submission04.glmnet.lasso002.staking.gbm.xgbTree.kknn.ranger.lasso.elasticnet.rf.svmRadial.csv", row.names = FALSE)
+# submission bagging.lasso
+write.csv(submit, file = "submission06.bagging.lasso.100.oneHotEncoding.36var.alpha1.lambdaNEAR0012.votes.csv", row.names = FALSE)

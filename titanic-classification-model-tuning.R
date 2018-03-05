@@ -136,6 +136,7 @@ training.test <- training[-inTrain, ]
 
 
 # train control with tuned parameters
+folds <- 5
 trControl_tuned <- trainControl(
   method = "repeatedcv", number = 5, repeats = 1, search = "grid",
   index = cv_folds,
@@ -143,9 +144,8 @@ trControl_tuned <- trainControl(
   classProbs = TRUE, # Important for classification
   verboseIter = TRUE
 )
-
-folds <- 5
 cv_folds <- createMultiFolds(training.train$Survived, k = folds, times = 1)
+
 # train control for searching parameter
 trControl_search <- trainControl(
   method = "repeatedcv", number = folds, repeats = 2, search = "random",
@@ -155,15 +155,6 @@ trControl_search <- trainControl(
 )
 
 
-
-
-
-# dimensionality reduction and feature selection
-# RFE algorithm
-control <- rfeControl(functions=rfFuncs, method="cv", number=5)
-results <- rfe(Survived ~ ., data = training, sizes=c(1:ncol(training)), rfeControl=control)
-print(results); plot(results)
-# Top 5 Fare, Sexmale, Sexfemale, Pclass.L, Age
 
 
 
@@ -195,6 +186,38 @@ train_pred <- ifelse(train_pred == "survived", 1, 0)
 auc <- roc(training.test$Survived, train_pred, plot = TRUE) 
 print(auc)
 # training.test AUC 0.8078
+
+
+
+
+
+
+# bag of lasso
+predictorNames <- names(predictors)
+length_divisor <- 1
+predictions <- 0
+predictions <- foreach(i=1:10,.combine=cbind) %dopar% { 
+  set.seed(i)
+  sampleRows <- sample(nrow(training.train), size = floor((nrow(training.train)/length_divisor)), replace = TRUE)
+  fit <- train(Survived ~ ., data = training.train[sampleRows, ],
+               method = "glmnet",
+               tuneGrid = myGrid_lasso,
+               # tuneLength = 10,
+               metric = "Accuracy",
+               trControl = trControl_tuned)
+  predictions[i] <- data.frame(predict(fit, newdata = training.test, type = "prob")[1]) # pred > .5 died
+}
+auc <- roc(training.test$Survived, rowMeans(predictions), plot = TRUE)
+print(auc)
+
+bag_mean_pred <- rowMeans(predictions) # prob of dying
+bag_mean_pred <- ifelse(bag_mean_pred < .5, "survived", "died")
+confusionMatrix(training.test$Survived, bag_mean_pred)
+# accuracy 0.8028 
+
+
+
+
 
 
 
@@ -377,7 +400,6 @@ train_pred <- ifelse(train_pred == "survived", 1, 0)
 auc <- roc(training.test$Survived, train_pred, plot = TRUE) 
 print(auc)
 # training.test AUC 0.8178
-
 
 
 
